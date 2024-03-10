@@ -108,8 +108,8 @@ Routes:
 #            AuthenticationProviderKey: ApiSecurityAuthenticationScheme
 #            AllowedScopes:
 #                -
-        RouteClaimsRequirement:
-            userType: SALESMAN
+#        RouteClaimsRequirement:
+#            userType: SALESMAN
         DangerousAcceptAnyServerCertificateValidator: true
     -
         DownstreamPathTemplate: /api/Policies/{number}
