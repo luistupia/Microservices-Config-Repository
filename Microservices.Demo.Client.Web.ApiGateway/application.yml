@@ -104,9 +104,9 @@ Routes:
         ServiceName: Microservices.Demo.Policy.API
         UpstreamHttpMethod: 
             - Get
-#        AuthenticationOptions:
+        AuthenticationOptions:
 #            AuthenticationProviderKey: ApiSecurityAuthenticationScheme
-#            AllowedScopes:
+            AllowedScopes:
 #                -
 #        RouteClaimsRequirement:
 #            userType: SALESMAN
