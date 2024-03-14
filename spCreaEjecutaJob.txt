@@ -1,0 +1,170 @@
+USE [E300]
+GO
+/****** Object:  StoredProcedure [dbo].[Tbl_Operacion_ProcesaExcel_demo]    Script Date: 14/03/2024 09:04:58 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ 
+--exec [Tbl_Operacion_ProcesaExcel_demo] 1,'2016-01-01','2019-12-31',180,1;
+ 
+ALTER PROCEDURE [dbo].[Tbl_Operacion_ProcesaExcel_demo] 
+(   
+    @IdDepartamento int,  
+@FechaIni VARCHAR(10),  
+@FechaFin VARCHAR(10),  
+    @intMAXWAITMINS  INT=180   
+   ,@bitRAISEERROR   BIT=0  
+)   
+AS  
+ 
+BEGIN  
+-- Si el código de retorno es 1 indica error  
+-- Si el código de retorno es 0 indica ejecución exitosa  
+SET NOCOUNT ON;  
+SET XACT_ABORT ON;  
+	 BEGIN TRY  
+				 DECLARE @nvcJOB AS NVARCHAR(128)  
+				 DECLARE @intSECCOUNT AS INT  
+				 DECLARE @intMAXSECCOUNT AS INT  
+				 DECLARE @intRUNSTATUS AS INT  
+				 -- Obtiene el año, mes, día, hora minuto y segundo del servidor  
+				 DECLARE @intSTARTDATE AS INT  
+				 DECLARE @intSTARTTIME AS INT  
+				 DECLARE @return_value int      
+				 DECLARE @xVar XML     
+				 DECLARE @id VARCHAR(100)  
+				 DECLARE @Server varchar(50)
+ 
+				 set @Server = CONVERT(SYSNAME, SERVERPROPERTY(N'servername'))    
+				 print 'Ejecutar Tbl_Reporte_Update'
+				 EXEC Tbl_Reporte_Update @FechaIni,@FechaFin,@IdDepartamento  
+ 
+				 declare @command_sql varchar(200)
+				 set @command_sql = N'/SQL "\E300\E300_Generar" /SERVER PAUTGSQLD12 /X86 /CHECKPOINTING OFF  /SET \Package.Variables[User::vIdDepartamento].Value;'+cast(@IdDepartamento as varchar)+' /REPORTING E'
+ 
+				 DECLARE @jobId VARCHAR(100)
+				 SET @intSTARTDATE = CAST(CONVERT(VARCHAR, GETDATE(), 112) AS BIGINT)   
+				 SET @intSTARTTIME = DATEPART(hour, GETDATE()) *   
+									 10000 + DATEPART(minute, GETDATE()) *   
+									 100 + DATEPART(second, GETDATE());
+ 
+				 print 'Inicio crear job'						
+				 IF NOT EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE name=N'\E300\E300_Generar_Excel_2') begin		
+						print 'Creando job'
+						DECLARE @ReturnCode INT
+						DECLARE @OWNER VARCHAR(100)
+						SET @OWNER = SUSER_SNAME()
+						EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'\E300\E300_Generar_Excel_2', 
+								@enabled=1, 
+								@notify_level_eventlog=3, 
+								@notify_level_email=0, 
+								@notify_level_netsend=0, 
+								@notify_level_page=0, 
+								@delete_level=0, 
+								@description=N'Job para ejecución del SSIS \E300\E300_Generar.', 
+								@category_name=N'[Uncategorized (Local)]', 
+								@owner_login_name=@OWNER, @job_id = @jobId OUTPUT
+ 
+								
+						EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_name = N'\E300\E300_Generar_Excel_2',@server_name =  @Server  
+						EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Step para el Proceso del SSIS', 
+								@step_id=1, 
+								@cmdexec_success_code=0, 
+								@on_success_action=1, 
+								@on_success_step_id=0, 
+								@on_fail_action=2, 
+								@on_fail_step_id=0, 
+								@retry_attempts=0, 
+								@retry_interval=0, 
+								@os_run_priority=0, @subsystem=N'SSIS', 
+								@command= @command_sql,
+								@database_name=N'master', 
+								@flags=0, 
+								@proxy_name=N'APE300DES_PROXY';
+				 end
+				 else
+				 begin
+					SELECT @jobId = job_id FROM msdb.dbo.sysjobs WHERE name=N'\E300\E300_Generar_Excel_2'
+				 end
+				 print @jobId
+				 print 'Ejecutar history'
+				 DECLARE @Result_sp_help_jobhistory TABLE (  
+							 instance_id INT,  
+							 job_id UNIQUEIDENTIFIER,  
+							 job_name SYSNAME,  
+							 step_id INT,  
+							 step_name SYSNAME,  
+							 sql_message_id INT,  
+							 sql_severity INT,  
+							 [message] NVARCHAR(4000), -- tamaño en sysjobshistory, RAISEERROR sólo acepta 2047 characters;  
+							 run_status INT,  
+							 run_date INT,  
+							 run_time INT,  
+							 run_duration INT,  
+							 operator_emailed NVARCHAR(20),  
+							 operator_netsent NVARCHAR(20),  
+							 operator_paged NVARCHAR(20),  
+							 retries_attempted INT,  
+							 [server] NVARCHAR(30)  
+						 )
+ 
+				 set @intSECCOUNT = 0
+				  DECLARE @intSTARTJOBRESULT AS INT  
+				  EXEC @intSTARTJOBRESULT = msdb..sp_start_job  @job_id = @jobId
+ 
+				  IF @intSTARTJOBRESULT <> 0 
+				    RAISERROR (N'Could not start job: %s.', 16, 2, @jobId)  
+ 
+				  WHILE @intRUNSTATUS IS NULL AND  
+						   @intSECCOUNT < 10800    
+					 BEGIN  
+						print 'ejecutando ' + cast(@intSECCOUNT as varchar)
+					  WAITFOR DELAY '0:0:01';  
+					  SET @intSECCOUNT = @intSECCOUNT + 1  
+					  DELETE FROM @Result_sp_help_jobhistory  
+					  INSERT INTO @Result_sp_help_jobhistory  
+					  EXEC msdb.dbo.sp_help_jobhistory @job_id= @jobId,   
+							   @start_run_date = @intSTARTDATE,   
+								 @start_run_time = @intSTARTTIME,   
+							   @mode = 'FULL'  
+					  SELECT @intRUNSTATUS = run_status  
+					  FROM   @Result_sp_help_jobhistory  
+					  WHERE  step_name = '(Job outcome)'  
+					 END  
+
+ 
+  
+	 END TRY  
+		 BEGIN CATCH  
+			DECLARE  
+				@nvcERRORMESSAGE    NVARCHAR(4000),  
+				@intERRORNUMBER     INT,  
+				@intERRORSEVERITY   INT,  
+				@intERRORSTATE      INT,  
+				@intERRORLINE       INT,  
+				@nvcERRORPROCEDURE  NVARCHAR(200);  
+			SELECT  
+				@intERRORNUMBER = ERROR_NUMBER(),  
+				@intERRORSEVERITY = ERROR_SEVERITY(),  
+				@intERRORSTATE = ERROR_STATE(),  
+				@intERRORLINE = ERROR_LINE(),  
+				@nvcERRORPROCEDURE = ISNULL(ERROR_PROCEDURE(), '-');  
+			SELECT @nvcERRORMESSAGE =  
+				 N'Error %d, Level %d, State %d, Procedure %s, Line %d, ' +  
+					   'Message: '+ ERROR_MESSAGE();  
+			IF @bitRAISEERROR <> 0  
+				RAISERROR  
+			(  
+			 @nvcERRORMESSAGE,     
+					@intERRORSEVERITY,  
+					1,  
+					@intERRORNUMBER,    -- original error number.  
+					@intERRORSEVERITY,  -- original error severity.  
+					@intERRORSTATE,     -- original error state.  
+					@nvcERRORPROCEDURE, -- original error procedure name.  
+					@intERRORLINE       -- original error line number.  
+					);  
+			RETURN 1  
+		 END CATCH   
+END  
